@@ -5,6 +5,7 @@ import akka.javasdk.annotations.Consume;
 import akka.javasdk.client.ComponentClient;
 import akka.javasdk.consumer.Consumer;
 import io.example.domain.BookingEvent;
+import io.example.application.ParticipantSlotEntity.Commands.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,6 +25,37 @@ public class SlotToParticipantConsumer extends Consumer {
 
     public Effect onEvent(BookingEvent event) {
         // Supply your own implementation
+        String entityId = participantSlotId(event);
+        switch (event) {
+            case BookingEvent.ParticipantMarkedAvailable markedAvailableEvent -> {
+                    MarkAvailable command = new MarkAvailable(markedAvailableEvent.slotId(), markedAvailableEvent.participantId(), markedAvailableEvent.participantType());
+                    client
+                            .forEventSourcedEntity(entityId)
+                            .method(ParticipantSlotEntity::markAvailable)
+                            .invoke(command);
+            }
+            case BookingEvent.ParticipantUnmarkedAvailable unmarkedAvailableEvent -> {
+                UnmarkAvailable command = new UnmarkAvailable(unmarkedAvailableEvent.slotId(), unmarkedAvailableEvent.participantId(), unmarkedAvailableEvent.participantType());
+                client
+                        .forEventSourcedEntity(entityId)
+                        .method(ParticipantSlotEntity::unmarkAvailable)
+                        .invoke(command);
+            }
+            case BookingEvent.ParticipantBooked bookedEvent -> {
+                Book command = new Book(bookedEvent.slotId(), bookedEvent.participantId(), bookedEvent.participantType(), bookedEvent.bookingId());
+                client
+                        .forEventSourcedEntity(entityId)
+                        .method(ParticipantSlotEntity::book)
+                        .invoke(command);
+            }
+            case BookingEvent.ParticipantCanceled canceledEvent -> {
+                Cancel command = new Cancel(canceledEvent.slotId(), canceledEvent.participantId(), canceledEvent.participantType(), canceledEvent.bookingId());
+                client
+                        .forEventSourcedEntity(entityId)
+                        .method(ParticipantSlotEntity::cancel)
+                        .invoke(command);
+            }
+        }
         return effects().done();
     }
 

@@ -7,8 +7,12 @@ import akka.javasdk.eventsourcedentity.EventSourcedEntityContext;
 import io.example.domain.BookingEvent;
 import io.example.domain.Participant;
 import io.example.domain.Timeslot;
+
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.stream.Collectors;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,28 +27,50 @@ public class BookingSlotEntity extends EventSourcedEntity<Timeslot, BookingEvent
     }
 
     public Effect<Done> markSlotAvailable(Command.MarkSlotAvailable cmd) {
-        return effects().error("not yet implemented");
+        return effects()
+                .persist(new BookingEvent.ParticipantMarkedAvailable(entityId, cmd.participant.id(), cmd.participant.participantType()))
+                .thenReply(timeslot -> Done.done());
     }
 
     public Effect<Done> unmarkSlotAvailable(Command.UnmarkSlotAvailable cmd) {
-        return effects().error("not yet implemented");
+        return effects()
+                .persist(new BookingEvent.ParticipantUnmarkedAvailable(entityId, cmd.participant.id(), cmd.participant.participantType()))
+                .thenReply(timeslot -> Done.done());
     }
 
     // NOTE: booking a slot should produce 3
     // `ParticipantBooked` events
     public Effect<Done> bookSlot(Command.BookReservation cmd) {
-        return effects().error("not yet implemented");
+        boolean canBook = currentState().isBookable(cmd.studentId, cmd.aircraftId, cmd.instructorId);
+        if (canBook)
+            return effects()
+                    .persistAll(
+                            List.of(
+                                    new BookingEvent.ParticipantBooked(entityId, cmd.aircraftId, Participant.ParticipantType.AIRCRAFT, cmd.bookingId),
+                                    new BookingEvent.ParticipantBooked(entityId, cmd.instructorId, Participant.ParticipantType.INSTRUCTOR, cmd.bookingId),
+                                    new BookingEvent.ParticipantBooked(entityId, cmd.studentId, Participant.ParticipantType.STUDENT, cmd.bookingId)
+                            ))
+                    .thenReply(timeslot -> Done.done());
+        else
+            return effects().error("Timeslot is not bookable");
     }
 
     // NOTE: canceling a booking should produce 3
     // `ParticipantCanceled` events
     public Effect<Done> cancelBooking(String bookingId) {
-        return effects().error("not yet implemented");
+        List<BookingEvent> events = new ArrayList<>();
+        for (Timeslot.Booking booking : currentState().findBooking(bookingId)) {
+            BookingEvent.ParticipantCanceled participantCanceled = new BookingEvent.ParticipantCanceled(entityId, booking.participant().id(), booking.participant().participantType(), bookingId);
+            events.add(participantCanceled);
+        }
+        return effects()
+                .persistAll(events)
+                .thenReply(timeslot -> Done.done());
 
     }
 
     public ReadOnlyEffect<Timeslot> getSlot() {
-        return effects().error("not yet implemented");
+        return effects().reply(currentState());
     }
 
     @Override
@@ -58,7 +84,15 @@ public class BookingSlotEntity extends EventSourcedEntity<Timeslot, BookingEvent
     public Timeslot applyEvent(BookingEvent event) {
         // Supply your own implementation to update state based
         // on the event
-        return currentState();
+        return switch (event) {
+            case BookingEvent.ParticipantMarkedAvailable markedAvailable -> currentState().reserve(markedAvailable);
+            case BookingEvent.ParticipantUnmarkedAvailable unmarkedAvailable -> currentState().unreserve(unmarkedAvailable);
+            case BookingEvent.ParticipantBooked booked ->
+                currentState()
+                        .book(booked)
+                        .unreserve(new BookingEvent.ParticipantUnmarkedAvailable(booked.slotId(), booked.participantId(), booked.participantType()));
+            case BookingEvent.ParticipantCanceled cancelled -> currentState().cancelBooking(cancelled.bookingId());
+        };
     }
 
     public sealed interface Command {
